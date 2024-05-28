@@ -18,7 +18,7 @@ def login_and_initialize(account_id: int, password: str, server: str) -> bool:
     return True
 
 # Function to send order to MetaTrader 5
-def send_order(order_type: str, symbol: str, volume: float = 0.1, price: float = 0.0) -> bool:
+def send_order(order_type: str, symbol: str, volume: float = 0.1, sl: float = 0.00, tp: float = 0.00) -> bool:
     # Check if the symbol is available in MarketWatch
     if not mt5.symbol_select(symbol, True):
         print(f"Failed to select {symbol}")
@@ -27,8 +27,12 @@ def send_order(order_type: str, symbol: str, volume: float = 0.1, price: float =
 
     # Determine the order type and price
     action = mt5.ORDER_TYPE_BUY if order_type == "b" else mt5.ORDER_TYPE_SELL
-    if price == 0.0:
-        price = mt5.symbol_info_tick(symbol).ask if order_type == "b" else mt5.symbol_info_tick(symbol).bid
+    price = mt5.symbol_info_tick(symbol).ask if order_type == "b" else mt5.symbol_info_tick(symbol).bid
+    # Adjust stop-loss and take-profit levels based on order type
+    if sl != 0.0:
+        sl = price - sl if order_type == "b" else price + sl
+    if tp != 0.0:
+        tp = price + tp if order_type == "b" else price - tp
 
     # Create an order request
     request = {
@@ -37,6 +41,8 @@ def send_order(order_type: str, symbol: str, volume: float = 0.1, price: float =
         "volume": volume,
         "type": action,
         "price": price,
+        "sl": sl,
+        "tp": tp,
         "deviation": 20,
         "magic": 234000,
         "comment": f"send order for {symbol}",
@@ -51,6 +57,7 @@ def send_order(order_type: str, symbol: str, volume: float = 0.1, price: float =
         print("Error Code:", mt5.last_error())
         return False
     print("Order executed successfully")
+    print(price)
     return True
 
 # Function to close all open positions
@@ -70,7 +77,7 @@ def close_all() -> None:
 
         # Determine the opposite action to close the position
         action = mt5.ORDER_TYPE_SELL if order_type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-        price = mt5.symbol_info_tick(symbol).bid if action == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask
+        price = mt5.symbol_info_tick(symbol).bid if action == mt5.ORDER_TYPE_SELL else mt5.symbol_info_tick(symbol).ask
 
         # Create request to close position
         close_request = {
@@ -92,7 +99,22 @@ def close_all() -> None:
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             print(f"Failed to close position #{ticket}, error code: {result.retcode}")
         else:
-            print(f"Position #{ticket} closed successfully")
+            print(f"Position #{ticket} closed successfully at{price} ")
+
+# Function to get all open ticket
+def get_open() -> None:
+    # Get open positions
+    positions = mt5.positions_get()
+    if positions is None:
+        print("No positions found, error code:", mt5.last_error())
+        return
+
+    # get data for each position
+    for position in positions:
+        symbol = position.symbol
+        volume = position.volume
+        price_open = position.price_open
+        print(volume, symbol, " at ", price_open)
 
 # Function to check current account balance
 def check_balance() -> Optional[Tuple[float, float]]:
@@ -146,10 +168,13 @@ if login_and_initialize(account_id, password, server):
             order_type = parts[0].lower()
             volume = float(parts[1])
             symbol = parts[2].upper() if len(parts) > 2 else "XAUUSD"
-            price = float(parts[3]) if len(parts) > 3 else 0.0
-            send_order(order_type, symbol, volume, price)
+            sl = float(parts[3]) if len(parts) > 3 else 0.0
+            tp = float(parts[4]) if len(parts) > 4 else 0.0
+            send_order(order_type, symbol, volume, sl, tp)
         elif command == "c":
             close_all()
+        elif command == "o":
+            get_open()
         elif command == "q":
             break
     mt5.shutdown()
